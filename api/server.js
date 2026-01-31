@@ -53,6 +53,7 @@ const SQL = {
           ORDER BY a.submission_date DESC LIMIT 1), 'NOT_SUBMITTED') AS application_status,
         ST_Transform(ST_Translate(ST_SetSRID(ST_Force2D(p.geometry), 32632), $1, $2), 4326) AS geometry
       FROM land_plots p
+      WHERE p.unique_plot_no != 'PLOT-001'
     ) t`,
   submitApp: `
     WITH inserted_app AS (
