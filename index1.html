@@ -29,21 +29,21 @@
     </div>
 
     <div class="step">
-        <label>1. Select Plot from Registry</label>
+        <label for="plotSelect">1. Select Plot from Registry</label>
         <select id="plotSelect">
             <option>Loading Database...</option>
         </select>
     </div>
 
     <div class="step">
-        <label>2. Upload Building Footprint</label>
-        <input type="file" id="buildingUpload" accept=".geojson">
+        <label for="buildingUpload">2. Upload Building Footprint</label>
+        <input type="file" id="buildingUpload" accept=".geojson" aria-label="Upload GeoJSON building footprint">
         <p style="font-size: 11px; color: #666;">Upload .geojson files from Ubani Estate survey.</p>
     </div>
 
     <button class="btn-validate" onclick="runValidation()">Run Compliance Check</button>
 
-    <div id="results"></div>
+    <div id="results" role="status" aria-live="polite"></div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -57,16 +57,35 @@
     async function loadPlots() {
         try {
             const res = await fetch('http://localhost:3000/api/plots');
+            if (!res.ok) {
+                console.error('loadPlots failed', res.status);
+                const select = document.getElementById('plotSelect');
+                select.innerHTML = '';
+                const opt = document.createElement('option'); opt.textContent = 'Connection Error'; opt.value = '';
+                select.appendChild(opt);
+                return;
+            }
             const plots = await res.json();
             const select = document.getElementById('plotSelect');
+            // safe DOM creation instead of innerHTML
             select.innerHTML = '';
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = '-- Select Plot --';
+            select.appendChild(placeholder);
             plots.forEach(p => {
                 let opt = document.createElement('option');
                 opt.value = p.unique_plot_no;
                 opt.textContent = `${p.unique_plot_no} (${p.zoning_class})`;
                 select.appendChild(opt);
             });
-        } catch (e) { console.error("API Error:", e); }
+        } catch (e) {
+            console.error("API Error:", e);
+            const select = document.getElementById('plotSelect');
+            select.innerHTML = '';
+            const opt = document.createElement('option'); opt.textContent = 'Connection Error'; opt.value = '';
+            select.appendChild(opt);
+        }
     }
 
     async function runValidation() {
@@ -78,41 +97,68 @@
 
         const reader = new FileReader();
         reader.onload = async (e) => {
-            const geojson = JSON.parse(e.target.result);
+            let geojson;
+            try {
+                geojson = JSON.parse(e.target.result);
+            } catch (err) {
+                console.error('Invalid GeoJSON', err);
+                alert('Uploaded file is not valid JSON/GeoJSON.');
+                return;
+            }
+
             // Handle both FeatureCollection and Single Geometries
-            const footprint = geojson.features ? geojson.features[0].geometry : geojson;
+            const footprint = geojson.features ? (geojson.features[0] && geojson.features[0].geometry) : geojson;
+            if (!footprint || !footprint.type || !footprint.coordinates) {
+                alert('Uploaded GeoJSON does not contain a valid geometry.');
+                return;
+            }
 
             // Map Visualization
-            if (buildingLayer) map.removeLayer(buildingLayer);
+            if (buildingLayer) try { map.removeLayer(buildingLayer); } catch(e){}
             buildingLayer = L.geoJSON(footprint, {style: {color: 'orange', weight: 3}}).addTo(map);
-            map.fitBounds(buildingLayer.getBounds());
+            try { map.fitBounds(buildingLayer.getBounds()); } catch(e){}
 
             // POST to API
-            const response = await fetch('http://localhost:3000/api/submit-application', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    applicant_name: "Ministry Submission",
-                    plot_no: plotId,
-                    geojson_footprint: footprint
-                })
-            });
-
-            const data = await response.json();
-            resultDiv.style.display = 'block';
-
-            if (data.gis_cleared) {
-                resultDiv.className = "pass";
-                resultDiv.innerHTML = `<h3>✅ COMPLIANT</h3>
-                    <b>Coverage:</b> ${(data.plot_coverage_ratio * 100).toFixed(2)}%<br>
-                    <b>Status:</b> Registration Authorized`;
-                buildingLayer.setStyle({color: 'green'});
-            } else {
-                resultDiv.className = "fail";
-                resultDiv.innerHTML = `<h3>❌ REJECTED</h3>
-                    <b>Cause:</b> ${data.message || 'Exceeds Plot Density Limit'}<br>
-                    <b>Measured:</b> ${(data.plot_coverage_ratio * 100).toFixed(2)}%`;
-                buildingLayer.setStyle({color: 'red'});
+            try {
+                const response = await fetch('http://localhost:3000/api/submit-application', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        applicant_name: "Ministry Submission",
+                        plot_no: plotId,
+                        geojson_footprint: footprint
+                    })
+                });
+                if (!response.ok) {
+                    console.error('submit-application failed', response.status);
+                    alert('Server error during submission.');
+                    return;
+                }
+                const data = await response.json();
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = ''; // clear
+                if (data.gis_cleared) {
+                    resultDiv.className = "pass";
+                    const h = document.createElement('h3'); h.textContent = '✅ COMPLIANT';
+                    resultDiv.appendChild(h);
+                    const cov = document.createElement('div'); cov.innerHTML = `<b>Coverage:</b> ${(data.plot_coverage_ratio * 100).toFixed(2)}%`;
+                    resultDiv.appendChild(cov);
+                    const st = document.createElement('div'); st.innerHTML = `<b>Status:</b> Registration Authorized`;
+                    resultDiv.appendChild(st);
+                    buildingLayer.setStyle({color: 'green'});
+                } else {
+                    resultDiv.className = "fail";
+                    const h = document.createElement('h3'); h.textContent = '❌ REJECTED';
+                    resultDiv.appendChild(h);
+                    const cause = document.createElement('div'); cause.innerHTML = `<b>Cause:</b> ${ (data.message || 'Exceeds Plot Density Limit') }`;
+                    resultDiv.appendChild(cause);
+                    const meas = document.createElement('div'); meas.innerHTML = `<b>Measured:</b> ${(data.plot_coverage_ratio * 100).toFixed(2)}%`;
+                    resultDiv.appendChild(meas);
+                    buildingLayer.setStyle({color: 'red'});
+                }
+            } catch (err) {
+                console.error('Submission error', err);
+                alert('Network error during submission.');
             }
         };
         reader.readAsText(fileInput.files[0]);
