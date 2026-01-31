@@ -1,0 +1,2 @@
+Supabase
+postgres password: AizesS8wNaupuyFo

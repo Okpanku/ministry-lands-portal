@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ministry of Lands | Automated Compliance</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; margin: 0; display: flex; height: 100vh; background: #f8f9fa; }
+        #map { flex-grow: 1; border-right: 2px solid #ddd; }
+        .sidebar { width: 420px; padding: 30px; background: white; box-shadow: -2px 0 15px rgba(0,0,0,0.1); overflow-y: auto; }
+        .header { border-bottom: 3px solid #27ae60; margin-bottom: 25px; padding-bottom: 10px; }
+        .step { background: #fdfdfd; padding: 15px; border: 1px solid #eee; border-radius: 8px; margin-bottom: 20px; }
+        label { font-weight: bold; color: #2c3e50; display: block; margin-bottom: 10px; }
+        select, input { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 5px; margin-bottom: 10px; }
+        .btn-validate { width: 100%; padding: 15px; background: #27ae60; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; font-size: 16px; }
+        .btn-validate:hover { background: #219150; }
+        #results { margin-top: 25px; padding: 20px; border-radius: 8px; display: none; }
+        .pass { background: #d4edda; color: #155724; border-left: 6px solid #28a745; }
+        .fail { background: #f8d7da; color: #721c24; border-left: 6px solid #dc3545; }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="sidebar">
+    <div class="header">
+        <h2 style="margin:0;">Land Registry Portal</h2>
+        <span style="font-size: 12px; color: #7f8c8d;">Automated Building Permit Validation</span>
+    </div>
+
+    <div class="step">
+        <label>1. Select Plot from Registry</label>
+        <select id="plotSelect">
+            <option>Loading Database...</option>
+        </select>
+    </div>
+
+    <div class="step">
+        <label>2. Upload Building Footprint</label>
+        <input type="file" id="buildingUpload" accept=".geojson">
+        <p style="font-size: 11px; color: #666;">Upload .geojson files from Ubani Estate survey.</p>
+    </div>
+
+    <button class="btn-validate" onclick="runValidation()">Run Compliance Check</button>
+
+    <div id="results"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    const map = L.map('map').setView([5.595, 7.521], 16);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    let buildingLayer;
+
+    // Fetch the 48 plots you imported from plots.geojson
+    async function loadPlots() {
+        try {
+            const res = await fetch('http://localhost:3000/api/plots');
+            const plots = await res.json();
+            const select = document.getElementById('plotSelect');
+            select.innerHTML = '';
+            plots.forEach(p => {
+                let opt = document.createElement('option');
+                opt.value = p.unique_plot_no;
+                opt.textContent = `${p.unique_plot_no} (${p.zoning_class})`;
+                select.appendChild(opt);
+            });
+        } catch (e) { console.error("API Error:", e); }
+    }
+
+    async function runValidation() {
+        const fileInput = document.getElementById('buildingUpload');
+        const plotId = document.getElementById('plotSelect').value;
+        const resultDiv = document.getElementById('results');
+
+        if (!fileInput.files[0]) return alert("Please select a GeoJSON building file first.");
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            const geojson = JSON.parse(e.target.result);
+            // Handle both FeatureCollection and Single Geometries
+            const footprint = geojson.features ? geojson.features[0].geometry : geojson;
+
+            // Map Visualization
+            if (buildingLayer) map.removeLayer(buildingLayer);
+            buildingLayer = L.geoJSON(footprint, {style: {color: 'orange', weight: 3}}).addTo(map);
+            map.fitBounds(buildingLayer.getBounds());
+
+            // POST to API
+            const response = await fetch('http://localhost:3000/api/submit-application', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    applicant_name: "Ministry Submission",
+                    plot_no: plotId,
+                    geojson_footprint: footprint
+                })
+            });
+
+            const data = await response.json();
+            resultDiv.style.display = 'block';
+
+            if (data.gis_cleared) {
+                resultDiv.className = "pass";
+                resultDiv.innerHTML = `<h3>✅ COMPLIANT</h3>
+                    <b>Coverage:</b> ${(data.plot_coverage_ratio * 100).toFixed(2)}%<br>
+                    <b>Status:</b> Registration Authorized`;
+                buildingLayer.setStyle({color: 'green'});
+            } else {
+                resultDiv.className = "fail";
+                resultDiv.innerHTML = `<h3>❌ REJECTED</h3>
+                    <b>Cause:</b> ${data.message || 'Exceeds Plot Density Limit'}<br>
+                    <b>Measured:</b> ${(data.plot_coverage_ratio * 100).toFixed(2)}%`;
+                buildingLayer.setStyle({color: 'red'});
+            }
+        };
+        reader.readAsText(fileInput.files[0]);
+    }
+
+    loadPlots();
+</script>
+</body>
+</html>
