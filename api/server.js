@@ -103,13 +103,21 @@ app.post('/api/submit-application', async (req, res) => {
 });
 app.get('/api/admin/remove-plots', async (req, res) => {
   try {
-    // This deletes both variations just in case
+    // 1. First, delete any applications linked to these plots
+    await pool.query(`
+      DELETE FROM applications 
+      WHERE plot_id IN (SELECT plot_id FROM land_plots WHERE unique_plot_no IN ('PLOT-001', 'PLT-001'))
+    `);
+
+    // 2. Now, delete the plots themselves
     const result = await pool.query(
-        "DELETE FROM land_plots WHERE unique_plot_no IN ('PLOT-001', 'PLT-001')"
+      "DELETE FROM land_plots WHERE unique_plot_no IN ('PLOT-001', 'PLT-001')"
     );
-    res.send(`Operation successful. Rows affected: ${result.rowCount}`);
+
+    res.send(`Success! Applications cleared and ${result.rowCount} plot(s) removed.`);
   } catch (err) {
-    res.status(500).send("Error: " + err.message);
+    console.error(err);
+    res.status(500).send("Database Error: " + err.message);
   }
 });
 
