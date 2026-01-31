@@ -101,10 +101,13 @@ app.post('/api/submit-application', async (req, res) => {
     res.status(500).json({ status: 'ERROR', message: err.message });
   }
 });
-app.get('/api/admin/remove-plot-001', async (req, res) => {
+app.get('/api/admin/remove-plots', async (req, res) => {
   try {
-    await pool.query("DELETE FROM land_plots WHERE unique_plot_no = 'PLT-001'");
-    res.send("Successfully deleted PLT-001 from the database.");
+    // This deletes both variations just in case
+    const result = await pool.query(
+        "DELETE FROM land_plots WHERE unique_plot_no IN ('PLOT-001', 'PLT-001')"
+    );
+    res.send(`Operation successful. Rows affected: ${result.rowCount}`);
   } catch (err) {
     res.status(500).send("Error: " + err.message);
   }
