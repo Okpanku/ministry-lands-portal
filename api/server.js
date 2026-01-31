@@ -6,11 +6,12 @@ const PORT = Number(process.env.PORT) || 3000;
 const NUDGE_X = 71.69;
 const NUDGE_Y = -57.74;
 
+// --- DATABASE CONNECTION ---
 const pool = new Pool(
   process.env.DATABASE_URL
     ? {
         connectionString: process.env.DATABASE_URL,
-        ssl: { rejectUnauthorized: false },
+        ssl: { rejectUnauthorized: false }, // Essential for Supabase/Render
         max: 20,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 5000,
@@ -21,18 +22,30 @@ const pool = new Pool(
         database: process.env.PGDATABASE || 'ministry_lands',
         password: process.env.PGPASSWORD || '',
         port: Number(process.env.PGPORT) || 5432,
-        max: 20,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 5000,
       }
 );
+
+// EMERGENCY DEBUGGER: This will tell us if Supabase is actually talking to us
+pool.connect((err, client, release) => {
+  if (err) {
+    console.error('❌ DATABASE CONNECTION ERROR:', err.message);
+  } else {
+    console.log('✅ DATABASE CONNECTED SUCCESSFULLY TO SUPABASE');
+    release();
+  }
+});
 
 const app = express();
 const corsOrigin = process.env.CORS_ORIGIN || 'https://okpanku.github.io';
 
 app.use(express.json({ limit: '50mb' }));
-app.use(cors({ origin: corsOrigin, methods: ['GET', 'POST'], credentials: true }));
+app.use(cors({ 
+  origin: corsOrigin, 
+  methods: ['GET', 'POST'], 
+  credentials: true 
+}));
 
+// --- HELPERS ---
 function sendError(res, status, message) {
   res.status(status).json({ status: 'ERROR', message });
 }
@@ -76,6 +89,11 @@ const SQL = {
     WHERE plot_id = (SELECT plot_id FROM land_plots WHERE unique_plot_no = $2)`,
 };
 
+// Root Health Check (So "Cannot GET /" is replaced with info)
+app.get('/', (req, res) => {
+  res.send('Ministry GIS API is running. Point your frontend to /api/plots');
+});
+
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'ok', service: 'ministry-api' });
 });
@@ -95,8 +113,8 @@ app.get('/api/plots', async (req, res) => {
     const data = result.rows[0]?.json_build_object;
     return sendSuccess(res, data || { type: 'FeatureCollection', features: [] });
   } catch (err) {
-    console.error('GET /api/plots:', err.message);
-    sendError(res, 500, 'Failed to load plots');
+    console.error('❌ GET /api/plots ERROR:', err.message);
+    sendError(res, 500, `Failed to load plots: ${err.message}`);
   }
 });
 
@@ -124,27 +142,9 @@ app.post('/api/submit-application', async (req, res) => {
     if (!result.rows[0]) return sendError(res, 404, 'Plot not found');
     return sendSuccess(res, { status: 'SUCCESS', analysis: result.rows[0] });
   } catch (err) {
-    console.error('POST /api/submit-application:', err.message);
+    console.error('❌ SUBMISSION ERROR:', err.message);
     const code = err.code === '22P02' || /geometry/i.test(err.message) ? 400 : 500;
     sendError(res, code, code === 400 ? 'Invalid geometry or plot' : 'Submission failed');
-  }
-});
-
-app.post('/api/update-status', async (req, res) => {
-  const { plot_no, gis_cleared } = req.body || {};
-  if (!plot_no || typeof plot_no !== 'string' || !plot_no.trim()) {
-    return sendError(res, 400, 'plot_no is required');
-  }
-  if (typeof gis_cleared !== 'boolean') {
-    return sendError(res, 400, 'gis_cleared must be true or false');
-  }
-  try {
-    const result = await pool.query(SQL.updateStatus, [gis_cleared, plot_no.trim()]);
-    if (result.rowCount === 0) return sendError(res, 404, 'Plot or application not found');
-    sendSuccess(res);
-  } catch (err) {
-    console.error('POST /api/update-status:', err.message);
-    sendError(res, 500, 'Update failed');
   }
 });
 
