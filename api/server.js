@@ -101,5 +101,13 @@ app.post('/api/submit-application', async (req, res) => {
     res.status(500).json({ status: 'ERROR', message: err.message });
   }
 });
+app.get('/api/admin/remove-plot-001', async (req, res) => {
+  try {
+    await pool.query("DELETE FROM land_plots WHERE unique_plot_no = 'PLOT-001'");
+    res.send("Successfully deleted PLOT-001 from the database.");
+  } catch (err) {
+    res.status(500).send("Error: " + err.message);
+  }
+});
 
 const server = app.listen(PORT, () => console.log('🚀 Ministry API online on port', PORT));
