@@ -103,7 +103,7 @@ app.post('/api/submit-application', async (req, res) => {
 });
 app.get('/api/admin/remove-plot-001', async (req, res) => {
   try {
-    await pool.query("DELETE FROM land_plots WHERE unique_plot_no = 'PLOT-001'");
+    await pool.query("DELETE FROM land_plots WHERE unique_plot_no = 'PLT-001'");
     res.send("Successfully deleted PLOT-001 from the database.");
   } catch (err) {
     res.status(500).send("Error: " + err.message);
