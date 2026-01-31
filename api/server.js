@@ -1,36 +1,33 @@
+const dns = require('node:dns');
+// FORCE IPv4: This fixes the ENETUNREACH error on Render
+dns.setDefaultResultOrder('ipv4first');
+
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
 
-const PORT = Number(process.env.PORT) || 3000;
+const PORT = Number(process.env.PORT) || 10000;
 const NUDGE_X = 71.69;
 const NUDGE_Y = -57.74;
 
 // --- DATABASE CONNECTION ---
-const pool = new Pool(
-  process.env.DATABASE_URL
-    ? {
-        connectionString: process.env.DATABASE_URL,
-        ssl: { rejectUnauthorized: false }, // Essential for Supabase/Render
-        max: 20,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 5000,
-      }
-    : {
-        user: process.env.PGUSER || 'postgres',
-        host: process.env.PGHOST || '127.0.0.1',
-        database: process.env.PGDATABASE || 'ministry_lands',
-        password: process.env.PGPASSWORD || '',
-        port: Number(process.env.PGPORT) || 5432,
-      }
-);
+// Using your Supabase Transaction Pooler URL
+const DATABASE_URL = "postgresql://postgres.viuivrrviocyxjyvkowa:AizesS8wNaupuyFo@aws-1-eu-west-1.pooler.supabase.com:6543/postgres";
 
-// EMERGENCY DEBUGGER: This will tell us if Supabase is actually talking to us
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+});
+
+// Connection Tester
 pool.connect((err, client, release) => {
   if (err) {
     console.error('❌ DATABASE CONNECTION ERROR:', err.message);
   } else {
-    console.log('✅ DATABASE CONNECTED SUCCESSFULLY TO SUPABASE');
+    console.log('✅ DATABASE CONNECTED SUCCESSFULLY VIA IPv4 POOLER');
     release();
   }
 });
@@ -39,23 +36,9 @@ const app = express();
 const corsOrigin = process.env.CORS_ORIGIN || 'https://okpanku.github.io';
 
 app.use(express.json({ limit: '50mb' }));
-app.use(cors({ 
-  origin: corsOrigin, 
-  methods: ['GET', 'POST'], 
-  credentials: true 
-}));
+app.use(cors({ origin: corsOrigin, methods: ['GET', 'POST'], credentials: true }));
 
-// --- HELPERS ---
-function sendError(res, status, message) {
-  res.status(status).json({ status: 'ERROR', message });
-}
-function sendSuccess(res, data = { status: 'SUCCESS' }) {
-  res.json(data);
-}
-
-const LOGIN_USER = process.env.LOGIN_USER || 'admin';
-const LOGIN_PASS = process.env.LOGIN_PASS || 'ministry2024';
-
+// --- SQL QUERIES ---
 const SQL = {
   plots: `
     SELECT json_build_object(
@@ -83,77 +66,39 @@ const SQL = {
       ST_AsGeoJSON(ST_Transform(ST_Translate(ST_SetSRID(ST_Force2D(p.geometry), 32632), $3, $4), 4326))::json AS plot_outline_geojson,
       ST_AsGeoJSON(ST_Transform(i.building_footprint, 4326))::json AS footprint_geojson
     FROM inserted_app i
-    JOIN land_plots p ON i.plot_id = p.plot_id`,
-  updateStatus: `
-    UPDATE applications SET gis_cleared = $1
-    WHERE plot_id = (SELECT plot_id FROM land_plots WHERE unique_plot_no = $2)`,
+    JOIN land_plots p ON i.plot_id = p.plot_id`
 };
 
-// Root Health Check (So "Cannot GET /" is replaced with info)
-app.get('/', (req, res) => {
-  res.send('Ministry GIS API is running. Point your frontend to /api/plots');
-});
-
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', service: 'ministry-api' });
-});
-
-app.post('/api/login', (req, res) => {
-  const { username, password } = req.body || {};
-  if (!username || !password) return sendError(res, 400, 'Username and password required');
-  if (username === LOGIN_USER && password === LOGIN_PASS) {
-    return sendSuccess(res, { status: 'SUCCESS', token: 'official-access-granted' });
-  }
-  sendError(res, 401, 'Unauthorized Personnel');
-});
+// --- ROUTES ---
+app.get('/', (req, res) => res.send('Ministry API Live'));
 
 app.get('/api/plots', async (req, res) => {
   try {
     const result = await pool.query(SQL.plots, [NUDGE_X, NUDGE_Y]);
-    const data = result.rows[0]?.json_build_object;
-    return sendSuccess(res, data || { type: 'FeatureCollection', features: [] });
+    res.json(result.rows[0]?.json_build_object || { type: 'FeatureCollection', features: [] });
   } catch (err) {
-    console.error('❌ GET /api/plots ERROR:', err.message);
-    sendError(res, 500, `Failed to load plots: ${err.message}`);
+    console.error('❌ FETCH ERROR:', err.message);
+    res.status(500).json({ status: 'ERROR', message: err.message });
   }
 });
 
-function isValidGeojsonGeometry(geom) {
-  if (!geom || typeof geom !== 'object') return false;
-  const types = ['Point', 'LineString', 'Polygon', 'MultiPoint', 'MultiLineString', 'MultiPolygon'];
-  return types.includes(geom.type) && Array.isArray(geom.coordinates);
-}
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body || {};
+  if (username === (process.env.LOGIN_USER || 'admin') && password === (process.env.LOGIN_PASS || 'ministry2024')) {
+    res.json({ status: 'SUCCESS', token: 'access-granted' });
+  } else {
+    res.status(401).json({ status: 'ERROR', message: 'Unauthorized' });
+  }
+});
 
 app.post('/api/submit-application', async (req, res) => {
-  const { plot_no, geojson_footprint } = req.body || {};
-  if (!plot_no || typeof plot_no !== 'string' || !plot_no.trim()) {
-    return sendError(res, 400, 'plot_no is required');
-  }
-  if (!isValidGeojsonGeometry(geojson_footprint)) {
-    return sendError(res, 400, 'Valid geojson_footprint geometry required');
-  }
+  const { plot_no, geojson_footprint } = req.body;
   try {
-    const result = await pool.query(SQL.submitApp, [
-      JSON.stringify(geojson_footprint),
-      plot_no.trim(),
-      NUDGE_X,
-      NUDGE_Y,
-    ]);
-    if (!result.rows[0]) return sendError(res, 404, 'Plot not found');
-    return sendSuccess(res, { status: 'SUCCESS', analysis: result.rows[0] });
+    const result = await pool.query(SQL.submitApp, [JSON.stringify(geojson_footprint), plot_no, NUDGE_X, NUDGE_Y]);
+    res.json({ status: 'SUCCESS', analysis: result.rows[0] });
   } catch (err) {
-    console.error('❌ SUBMISSION ERROR:', err.message);
-    const code = err.code === '22P02' || /geometry/i.test(err.message) ? 400 : 500;
-    sendError(res, code, code === 400 ? 'Invalid geometry or plot' : 'Submission failed');
+    res.status(500).json({ status: 'ERROR', message: err.message });
   }
 });
 
 const server = app.listen(PORT, () => console.log('🚀 Ministry API online on port', PORT));
-
-function shutdown() {
-  server.close(() => {
-    pool.end().then(() => process.exit(0)).catch(() => process.exit(1));
-  });
-}
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
