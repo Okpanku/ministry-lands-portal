@@ -1,94 +1,309 @@
-const dns = require('node:dns');
-dns.setDefaultResultOrder('ipv4first'); // FORCE IPv4 for Render/Supabase stability
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ministry of Lands | Physical Planning Portal</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+    <style>
+        :root {
+            --color-primary: #27ae60;
+            --color-primary-dark: #219a52;
+            --color-danger: #e74c3c;
+            --color-success: #2ecc71;
+            --color-info: #2980b9;
+            --color-muted: #95a5a6;
+            --color-dark: #2c3e50;
+            --color-border: #eee;
+        }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; display: flex; height: 100vh; background: #f4f7f6; overflow: hidden; }
+        #map { flex-grow: 1; z-index: 1; background: #aad3df; }
+        .sidebar { width: 400px; min-width: 320px; padding: 20px; background: white; overflow-y: auto; box-shadow: -2px 0 10px rgba(0,0,0,0.1); z-index: 2; display: flex; flex-direction: column; }
+        .step { background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 12px; border: 1px solid var(--color-border); }
+        .btn { width: 100%; padding: 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 5px; transition: 0.3s; }
+        .btn-primary { background: var(--color-primary); color: white; }
+        .btn-primary:hover { background: var(--color-primary-dark); }
+        .btn-approve { background: var(--color-success); color: white; }
+        .btn-reject { background: var(--color-danger); color: white; }
+        .btn-secondary { background: #34495e; color: white; }
+        .btn-reset { background: var(--color-muted); color: white; }
 
-const express = require('express');
-const { Pool } = require('pg');
-const cors = require('cors');
+        .tab-bar { display: flex; margin-bottom: 15px; border-bottom: 2px solid var(--color-border); }
+        .tab { flex: 1; padding: 10px; text-align: center; cursor: pointer; font-weight: bold; color: #999; font-size: 13px; }
+        .tab.active { color: var(--color-primary); border-bottom: 3px solid var(--color-primary); }
 
-const PORT = Number(process.env.PORT) || 10000;
-const NUDGE_X = 71.69;
-const NUDGE_Y = -57.74;
+        .stat-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; text-align: center; margin-top: 10px; }
+        .stat-val { font-size: 18px; font-weight: bold; }
 
-const DATABASE_URL = "postgresql://postgres.viuivrrviocyxjyvkowa:AizesS8wNaupuyFo@aws-1-eu-west-1.pooler.supabase.com:6543/postgres";
+        /* PRINT STYLES - FIXING THE MAPPING ZONE */
+        .print-only { display: none; }
+        
+        #tech-map-zone { 
+            width: 100%; 
+            height: 450px; 
+            border: 1px solid #333; 
+            margin: 20px 0; 
+            background: #f0f0f0;
+        }
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
+        @media print {
+            @page { size: A4; margin: 10mm; }
+            body, html { height: auto !important; overflow: visible !important; display: block !important; }
+            .sidebar, #map, #loginOverlay, .leaflet-control-container { display: none !important; }
+            .print-only { display: block !important; background: white; width: 100%; }
+            .page { width: 100%; padding: 10mm; box-sizing: border-box; border: 8px solid var(--color-primary); }
+            .cert-header { text-align: center; border-bottom: 3px solid var(--color-primary); padding-bottom: 10px; margin-bottom: 20px; }
+            #tech-map-zone { 
+                display: block !important; 
+                width: 100% !important; 
+                height: 500px !important; 
+                visibility: visible !important; 
+            }
+        }
 
-const app = express();
-const corsOrigin = process.env.CORS_ORIGIN || 'https://okpanku.github.io';
+        #loginOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(44, 62, 80, 0.98); z-index: 9999; display: flex; justify-content: center; align-items: center; }
+        .login-box { background: white; padding: 40px; border-radius: 15px; width: 350px; text-align: center; }
+        .login-box input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 5px; box-sizing: border-box; }
+        textarea { width: 100%; height: 70px; padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-top: 10px; font-family: inherit; resize: none; box-sizing: border-box; }
+    </style>
+</head>
+<body>
 
-app.use(express.json({ limit: '50mb' }));
-app.use(cors({ origin: corsOrigin, methods: ['GET', 'POST'], credentials: true }));
+<div id="loginOverlay">
+    <div class="login-box">
+        <h2 style="color: var(--color-primary);">Ministry Portal</h2>
+        <p style="color: #666; font-size: 14px;">Authorized Access Only</p>
+        <input id="loginUser" type="text" placeholder="Username">
+        <input id="loginPass" type="password" placeholder="Password">
+        <button type="button" class="btn btn-primary" onclick="handleLogin()">Access Registry</button>
+    </div>
+</div>
 
-// --- SQL QUERIES ---
-const SQL = {
-  plots: `
-    SELECT json_build_object(
-      'type', 'FeatureCollection',
-      'features', COALESCE(json_agg(ST_AsGeoJSON(t.*)::json), '[]'::json)
-    )
-    FROM (
-      SELECT p.unique_plot_no, p.zoning_class, p.area_sqm,
-        COALESCE((SELECT CASE WHEN a.gis_cleared = TRUE THEN 'APPROVED'
-          WHEN a.gis_cleared = FALSE THEN 'REJECTED' ELSE 'PENDING' END
-          FROM applications a WHERE a.plot_id = p.plot_id
-          ORDER BY a.submission_date DESC LIMIT 1), 'NOT_SUBMITTED') AS application_status,
-        ST_Transform(ST_Translate(ST_SetSRID(ST_Force2D(p.geometry), 32632), $1, $2), 4326) AS geometry
-      FROM land_plots p
-      WHERE p.unique_plot_no NOT IN ('PLOT-001', 'PLT-001') -- Cleaned up for demo
-    ) t`,
-  submitApp: `
-    WITH inserted_app AS (
-      INSERT INTO applications (plot_id, applicant_name, building_footprint)
-      SELECT plot_id, 'Portal User', ST_Multi(ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326), 32632))
-      FROM land_plots WHERE unique_plot_no = $2
-      RETURNING plot_id, building_footprint
-    )
-    SELECT p.unique_plot_no,
-      ROUND(ST_Distance(i.building_footprint, ST_Boundary(p.geometry))::numeric, 2) AS min_setback,
-      ST_AsGeoJSON(ST_Transform(ST_Translate(ST_SetSRID(ST_Force2D(p.geometry), 32632), $3, $4), 4326))::json AS plot_outline_geojson,
-      ST_AsGeoJSON(ST_Transform(i.building_footprint, 4326))::json AS footprint_geojson
-    FROM inserted_app i
-    JOIN land_plots p ON i.plot_id = p.plot_id`
-};
+<div id="techCert" class="print-only">
+    <div class="page">
+        <div class="cert-header">
+            <h1 style="color: var(--color-primary); margin: 0;">MINISTRY OF LANDS</h1>
+            <h2>Technical Verification Report</h2>
+        </div>
+        <p><b>Plot Number:</b> <span class="p-id"></span> | <b>Date:</b> <span class="p-date"></span></p>
+        <p style="font-size: 18px;"><b>Measured Setback:</b> <b style="color:red;" class="p-setback"></b></p>
+        
+        <div id="tech-map-zone"></div> 
 
-// --- ROUTES ---
-app.get('/', (req, res) => res.send('Ministry API Live'));
+        <div style="margin-top:50px;">
+            <div style="border-top: 1px solid #000; width: 200px; text-align: center; padding-top: 5px;">Planning/GIS Officer</div>
+        </div>
+    </div>
+</div>
 
-app.get('/api/plots', async (req, res) => {
-  try {
-    const result = await pool.query(SQL.plots, [NUDGE_X, NUDGE_Y]);
-    res.json(result.rows[0]?.json_build_object || { type: 'FeatureCollection', features: [] });
-  } catch (err) {
-    res.status(500).json({ status: 'ERROR', message: err.message });
-  }
-});
+<div id="map"></div>
 
-app.post('/api/submit-application', async (req, res) => {
-  const { plot_no, geojson_footprint } = req.body;
-  try {
-    const result = await pool.query(SQL.submitApp, [JSON.stringify(geojson_footprint), plot_no, NUDGE_X, NUDGE_Y]);
-    res.json({ status: 'SUCCESS', analysis: result.rows[0] });
-  } catch (err) {
-    res.status(500).json({ status: 'ERROR', message: err.message });
-  }
-});
+<div class="sidebar">
+    <div class="tab-bar">
+        <div id="tab1" class="tab active" onclick="switchTab(1)">GIS SCAN</div>
+        <div id="tab2" class="tab" onclick="switchTab(2)">DIRECTOR</div>
+        <div id="tab3" class="tab" onclick="switchTab(3)">DASHBOARD</div>
+    </div>
 
-// ADDED: Missing status update route for the Director Tab
-app.post('/api/update-status', async (req, res) => {
-  const { plot_no, gis_cleared } = req.body;
-  try {
-    await pool.query(`
-      UPDATE applications 
-      SET gis_cleared = $1 
-      WHERE plot_id = (SELECT plot_id FROM land_plots WHERE unique_plot_no = $2)
-    `, [gis_cleared, plot_no]);
-    res.json({ status: 'SUCCESS' });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+    <div id="module1">
+        <div class="step">
+            <label><b>1. Plot Selection</b></label>
+            <select id="plotSelect" style="width:100%; padding:10px; margin-top:5px;" onchange="focusPlot(this.value)">
+                <option>Connecting to Database...</option>
+            </select>
+        </div>
+        <div class="step">
+            <label><b>2. Technical Scan</b></label>
+            <input type="file" id="buildingUpload" style="margin-top:10px; width:100%;">
+            <button type="button" class="btn btn-primary" style="margin-top:10px;" onclick="runValidation()">Run Analysis</button>
+        </div>
+        <div id="techResult" class="step" style="display:none; border-left: 4px solid var(--color-primary);">
+            Setback: <b id="resSetback" style="color: var(--color-danger);">-</b><br>
+            <button type="button" class="btn btn-secondary" style="margin-top:10px;" onclick="preparePrint('tech')">🖨️ Print Report</button>
+        </div>
+    </div>
 
-app.listen(PORT, () => console.log('🚀 Ministry API online on port', PORT));
+    <div id="module2" style="display:none;">
+        <div class="step">
+            <label><b>Executive Decision: <span id="reviewID">-</span></b></label>
+            <textarea id="directorNote" placeholder="Enter conditions..."></textarea>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:5px; margin-top:10px;">
+                <button type="button" class="btn btn-approve" onclick="preparePrint('exec', 'APPROVED')">APPROVE</button>
+                <button type="button" class="btn btn-reject" onclick="preparePrint('exec', 'REJECTED')">REJECT</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="module3" style="display:none;">
+        <div class="step" style="background: var(--color-dark); color: white;">
+            <b>Live Stats</b>
+            <div class="stat-grid">
+                <div><div class="stat-val" id="st-total">0</div><div style="font-size:9px;">TOTAL</div></div>
+                <div><div class="stat-val" style="color: var(--color-success);" id="st-app">0</div><div style="font-size:9px;">APPS</div></div>
+                <div><div class="stat-val" style="color: var(--color-danger);" id="st-rej">0</div><div style="font-size:9px;">REJS</div></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="step" style="margin-top:auto;">
+        <button type="button" class="btn btn-reset" onclick="location.reload()">🔄 Reset System</button>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+    const API_BASE = 'https://ministry-lands-portal.onrender.com'; 
+
+    const map = L.map('map').setView([5.595, 7.521], 18);
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { 
+        crossOrigin: 'anonymous' 
+    }).addTo(map);
+
+    let plotLayer, complianceLayer, currentData = null;
+    let stats = { total: 0, app: 0, rej: 0 };
+
+    function handleLogin() { 
+        document.getElementById('loginOverlay').style.display = 'none'; 
+        loadPlots(); 
+    }
+
+    async function loadPlots() {
+        try {
+            const res = await fetch(`${API_BASE}/api/plots`);
+            const data = await res.json();
+            // FILTER: Remove old test plots
+            data.features = data.features.filter(f => f.properties.unique_plot_no !== 'PLOT-001' && f.properties.unique_plot_no !== 'PLT-001');
+            updateSelect(data.features);
+            if (plotLayer) map.removeLayer(plotLayer);
+            plotLayer = L.geoJSON(data, { 
+                style: { color: '#27ae60', weight: 2, fillOpacity: 0.1 } 
+            }).addTo(map);
+        } catch (e) { document.getElementById('plotSelect').innerHTML = '<option>Connection Error</option>'; }
+    }
+
+    async function runValidation() {
+        const id = document.getElementById('plotSelect').value;
+        const file = document.getElementById('buildingUpload').files[0];
+        if (!id || !file) return alert('Selection required');
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            let ft = JSON.parse(e.target.result);
+            const geom = ft.features ? ft.features[0].geometry : (ft.geometry || ft);
+            try {
+                const res = await fetch(`${API_BASE}/api/submit-application`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ plot_no: id, geojson_footprint: geom })
+                });
+                const d = await res.json();
+                if (d.status === 'SUCCESS') {
+                    currentData = d.analysis;
+                    displayCompliance(d.analysis);
+                    document.getElementById('techResult').style.display = 'block';
+                    document.getElementById('resSetback').textContent = d.analysis.min_setback + 'm';
+                    document.getElementById('reviewID').textContent = d.analysis.unique_plot_no;
+                    stats.total++;
+                }
+            } catch (err) { alert('Error analyzing data.'); }
+        };
+        reader.readAsText(file);
+    }
+
+    function displayCompliance(analysis) {
+        if (complianceLayer) map.removeLayer(complianceLayer);
+        complianceLayer = L.layerGroup().addTo(map);
+        L.geoJSON(analysis.footprint_geojson, { style: { color: "#e74c3c", weight: 3, fillOpacity: 0.5 } }).addTo(complianceLayer);
+        const plotBound = L.geoJSON(analysis.plot_outline_geojson, { style: { color: "#f1c40f", weight: 5, fillOpacity: 0, dashArray: "5, 10" } }).addTo(complianceLayer);
+        map.fitBounds(plotBound.getBounds(), { padding: [80, 80] });
+    }
+
+    function switchTab(n) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.getElementById('tab'+n).classList.add('active');
+        document.getElementById('module1').style.display = n === 1 ? 'block' : 'none';
+        document.getElementById('module2').style.display = n === 2 ? 'block' : 'none';
+        document.getElementById('module3').style.display = n === 3 ? 'block' : 'none';
+        if(n === 3) updateDashboard();
+    }
+
+    function updateSelect(fs) {
+        const sel = document.getElementById('plotSelect');
+        sel.innerHTML = '<option value="">-- Select Plot --</option>' +
+            fs.map(f => `<option value="${f.properties.unique_plot_no}">${f.properties.unique_plot_no}</option>`).join('');
+    }
+
+    function focusPlot(p) {
+        if (!p || !plotLayer) return;
+        plotLayer.eachLayer(l => {
+            if (l.feature.properties.unique_plot_no === p) map.fitBounds(l.getBounds());
+        });
+    }
+
+    function updateDashboard() {
+        document.getElementById('st-total').textContent = stats.total;
+        document.getElementById('st-app').textContent = stats.app;
+        document.getElementById('st-rej').textContent = stats.rej;
+    }
+
+    // --- ENHANCED PREPARE PRINT: THE FIX ---
+    function preparePrint(type, decision = '') {
+        if (!currentData) return alert("Run analysis first!");
+
+        const cert = document.getElementById('techCert');
+        cert.querySelector('.p-id').textContent = currentData.unique_plot_no;
+        cert.querySelector('.p-date').textContent = new Date().toLocaleDateString();
+        cert.querySelector('.p-setback').textContent = currentData.min_setback + 'm';
+
+        const mapZone = document.getElementById('tech-map-zone');
+        mapZone.innerHTML = ""; 
+        
+        // 1. Initialize Map inside the report
+        const rMap = L.map('tech-map-zone', { 
+            zoomControl: false, 
+            attributionControl: false,
+            fadeAnimation: false 
+        }).setView(map.getCenter(), 19);
+
+        // 2. Add Tiles
+        const tiles = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            crossOrigin: 'anonymous'
+        }).addTo(rMap);
+
+        // 3. Add Geometries
+        L.geoJSON(currentData.plot_outline_geojson, { style: { color: "#000", weight: 3, fillOpacity: 0 } }).addTo(rMap);
+        L.geoJSON(currentData.footprint_geojson, { style: { color: "#e74c3c", weight: 2, fillOpacity: 0.4 } }).addTo(rMap);
+        
+        // 4. IMPORTANT: Force the map to fill the container before tiles load
+        setTimeout(() => {
+            rMap.invalidateSize();
+        }, 100);
+
+        // 5. Wait for tiles to actually finish loading before opening print dialog
+        tiles.on('load', () => {
+            setTimeout(() => { 
+                window.print(); 
+                if (type === 'exec') updatePlotStatus(currentData.unique_plot_no, decision === 'APPROVED');
+            }, 1200); 
+        });
+
+        // 6. Emergency Fallback (4 seconds) if Internet is slow
+        setTimeout(() => { 
+            if(mapZone.innerHTML !== "") window.print(); 
+        }, 4000);
+    }
+
+    async function updatePlotStatus(plotNo, isApproved) {
+        try {
+            await fetch(`${API_BASE}/api/update-status`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ plot_no: plotNo, gis_cleared: isApproved })
+            });
+            if (isApproved) stats.app++; else stats.rej++;
+            updateDashboard();
+        } catch (err) { console.error("Update failed"); }
+    }
+</script>
+</body>
+</html>
