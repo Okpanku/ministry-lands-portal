@@ -35,16 +35,19 @@
         .stat-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; text-align: center; margin-top: 10px; }
         .stat-val { font-size: 18px; font-weight: bold; }
 
+        /* FIX: Map Zone size for Report */
+        #tech-map-zone { width: 100%; height: 450px; border: 1px solid #333; margin: 20px 0; background: #eee; }
+
         /* PRINT STYLES */
         .print-only { display: none; }
         @media print {
             @page { size: A4; margin: 0; }
-            body, html { height: auto; overflow: visible; display: block; }
-            .sidebar, #map, #loginOverlay, .leaflet-control-container { display: none !important; }
+            body, html { height: auto !important; overflow: visible !important; display: block !important; }
+            .sidebar, #map, #loginOverlay, .leaflet-control-container, .btn, .tab-bar { display: none !important; }
             .print-only { display: block !important; background: white; }
-            .page { width: 210mm; min-height: 297mm; padding: 20mm; margin: 0 auto; box-sizing: border-box; border: 10px solid var(--color-primary); position: relative; }
+            .page { width: 180mm; min-height: 250mm; padding: 10mm; margin: 10mm auto; border: 8px solid var(--color-primary); position: relative; }
             .cert-header { text-align: center; border-bottom: 3px solid var(--color-primary); padding-bottom: 10px; margin-bottom: 20px; }
-            #tech-map-zone { width: 100%; height: 400px; border: 1px solid #333; margin: 20px 0; }
+            #tech-map-zone { display: block !important; width: 100% !important; height: 500px !important; visibility: visible !important; }
         }
 
         #loginOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(44, 62, 80, 0.98); z-index: 9999; display: flex; justify-content: center; align-items: center; }
@@ -74,7 +77,8 @@
         <p><b>Plot Number:</b> <span class="p-id"></span> | <b>Date:</b> <span class="p-date"></span></p>
         <p style="font-size: 18px;"><b>Measured Setback:</b> <b style="color:red;" class="p-setback"></b></p>
         
-        <div id="tech-map-zone"></div> <div style="margin-top:50px;">
+        <div id="tech-map-zone"></div> 
+        <div style="margin-top:50px;">
             <div style="border-top: 1px solid #000; width: 200px; text-align: center; padding-top: 5px;">Planning/GIS Officer</div>
         </div>
     </div>
@@ -155,18 +159,14 @@
         try {
             const res = await fetch(`${API_BASE}/api/plots`);
             const data = await res.json();
-            
-            // FILTER: Remove PLOT-001 from dropdown and map
-            data.features = data.features.filter(f => f.properties.unique_plot_no !== 'PLOT-001');
-            
+            // REMOVE BOTH PLT AND PLOT 001
+            data.features = data.features.filter(f => f.properties.unique_plot_no !== 'PLOT-001' && f.properties.unique_plot_no !== 'PLT-001');
             updateSelect(data.features);
             if (plotLayer) map.removeLayer(plotLayer);
             plotLayer = L.geoJSON(data, { 
                 style: { color: '#27ae60', weight: 2, fillOpacity: 0.1 } 
             }).addTo(map);
-        } catch (e) { 
-            document.getElementById('plotSelect').innerHTML = '<option>Connection Error</option>';
-        }
+        } catch (e) { document.getElementById('plotSelect').innerHTML = '<option>Connection Error</option>'; }
     }
 
     async function runValidation() {
@@ -178,7 +178,6 @@
         reader.onload = async (e) => {
             let ft = JSON.parse(e.target.result);
             const geom = ft.features ? ft.features[0].geometry : (ft.geometry || ft);
-            
             try {
                 const res = await fetch(`${API_BASE}/api/submit-application`, {
                     method: 'POST',
@@ -235,32 +234,45 @@
         document.getElementById('st-rej').textContent = stats.rej;
     }
 
-    // FIXED PRINT REPORT WITH DYNAMIC MAP SNAPSHOT
+    // --- ENHANCED PREPARE PRINT ---
     function preparePrint(type, decision = '') {
         if (!currentData) return alert("Run analysis first!");
 
-        // Set text data
         const cert = document.getElementById('techCert');
         cert.querySelector('.p-id').textContent = currentData.unique_plot_no;
         cert.querySelector('.p-date').textContent = new Date().toLocaleDateString();
         cert.querySelector('.p-setback').textContent = currentData.min_setback + 'm';
 
-        // Clear and rebuild map in report div
         const mapZone = document.getElementById('tech-map-zone');
         mapZone.innerHTML = "";
         
         setTimeout(() => {
-            const rMap = L.map('tech-map-zone', { zoomControl: false, attributionControl: false }).setView(map.getCenter(), 19);
-            L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}').addTo(rMap);
-            L.geoJSON(currentData.plot_outline_geojson, { style: { color: "#000", weight: 2, fillOpacity: 0 } }).addTo(rMap);
-            L.geoJSON(currentData.footprint_geojson, { style: { color: "#e74c3c", weight: 2, fillOpacity: 0.3 } }).addTo(rMap);
+            const rMap = L.map('tech-map-zone', { 
+                zoomControl: false, 
+                attributionControl: false,
+                fadeAnimation: false 
+            }).setView(map.getCenter(), 19);
+
+            const tiles = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                crossOrigin: 'anonymous'
+            }).addTo(rMap);
+
+            L.geoJSON(currentData.plot_outline_geojson, { style: { color: "#000", weight: 3, fillOpacity: 0 } }).addTo(rMap);
+            L.geoJSON(currentData.footprint_geojson, { style: { color: "#e74c3c", weight: 2, fillOpacity: 0.4 } }).addTo(rMap);
             
-            // Wait for tiles, then open print dialog
-            setTimeout(() => { 
-                window.print(); 
-                if (type === 'exec') updatePlotStatus(currentData.unique_plot_no, decision === 'APPROVED');
-            }, 1000);
-        }, 300);
+            // Critical: Recalculate size to prevent empty tiles
+            rMap.invalidateSize();
+
+            tiles.on('load', () => {
+                setTimeout(() => { 
+                    window.print(); 
+                    if (type === 'exec') updatePlotStatus(currentData.unique_plot_no, decision === 'APPROVED');
+                }, 1500); // Buffer for rendering
+            });
+
+            // Fallback for slow internet
+            setTimeout(() => { window.print(); }, 4000);
+        }, 500);
     }
 
     async function updatePlotStatus(plotNo, isApproved) {
