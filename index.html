@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Ministry of Lands | Physical Planning Portal</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    
     <style>
         :root {
             --color-primary: #27ae60;
@@ -20,9 +22,8 @@
         #map { flex-grow: 1; z-index: 1; background: #aad3df; }
         .sidebar { width: 400px; min-width: 320px; padding: 20px; background: white; overflow-y: auto; box-shadow: -2px 0 10px rgba(0,0,0,0.1); z-index: 2; display: flex; flex-direction: column; }
         .step { background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 12px; border: 1px solid var(--color-border); }
-        .btn { width: 100%; padding: 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 5px; transition: 0.3s; }
+        .btn { width: 100%; padding: 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; margin-bottom: 5px; transition: 0.3s; display: flex; align-items: center; justify-content: center; gap: 8px; }
         .btn-primary { background: var(--color-primary); color: white; }
-        .btn-primary:hover { background: var(--color-primary-dark); }
         .btn-approve { background: var(--color-success); color: white; }
         .btn-reject { background: var(--color-danger); color: white; }
         .btn-secondary { background: #34495e; color: white; }
@@ -32,22 +33,27 @@
         .tab { flex: 1; padding: 10px; text-align: center; cursor: pointer; font-weight: bold; color: #999; font-size: 13px; }
         .tab.active { color: var(--color-primary); border-bottom: 3px solid var(--color-primary); }
 
-        .stat-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; text-align: center; margin-top: 10px; }
-        .stat-val { font-size: 18px; font-weight: bold; }
-
-        /* FIX: Map Zone size for Report */
-        #tech-map-zone { width: 100%; height: 450px; border: 1px solid #333; margin: 20px 0; background: #eee; }
-
-        /* PRINT STYLES */
+        /* --- REPORT & WATERMARK STYLES --- */
         .print-only { display: none; }
+        #tech-map-zone { width: 100%; height: 450px; border: 1px solid #333; margin: 20px 0; background: #eee; position: relative; z-index: 2; }
+
         @media print {
             @page { size: A4; margin: 0; }
             body, html { height: auto !important; overflow: visible !important; display: block !important; }
-            .sidebar, #map, #loginOverlay, .leaflet-control-container, .btn, .tab-bar { display: none !important; }
+            .sidebar, #map, #loginOverlay, .leaflet-control-container { display: none !important; }
             .print-only { display: block !important; background: white; }
-            .page { width: 180mm; min-height: 250mm; padding: 10mm; margin: 10mm auto; border: 8px solid var(--color-primary); position: relative; }
-            .cert-header { text-align: center; border-bottom: 3px solid var(--color-primary); padding-bottom: 10px; margin-bottom: 20px; }
-            #tech-map-zone { display: block !important; width: 100% !important; height: 500px !important; visibility: visible !important; }
+            .page { 
+                width: 180mm; min-height: 250mm; padding: 15mm; margin: 10mm auto; 
+                border: 8px solid var(--color-primary); position: relative; overflow: hidden;
+            }
+            .page::before {
+                content: "OFFICIAL LAND REPORT";
+                position: absolute; top: 50%; left: 50%;
+                transform: translate(-50%, -50%) rotate(-45deg);
+                font-size: 70px; font-weight: bold; color: rgba(0,0,0,0.04);
+                z-index: 0; pointer-events: none; white-space: nowrap;
+            }
+            .cert-header { text-align: center; border-bottom: 3px solid var(--color-primary); padding-bottom: 10px; margin-bottom: 20px; position: relative; z-index: 2; }
         }
 
         #loginOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(44, 62, 80, 0.98); z-index: 9999; display: flex; justify-content: center; align-items: center; }
@@ -60,8 +66,8 @@
 
 <div id="loginOverlay">
     <div class="login-box">
-        <h2 style="color: var(--color-primary);">Ministry Portal</h2>
-        <p style="color: #666; font-size: 14px;">Authorized Access Only</p>
+        <h2 style="color: var(--color-primary);"><i class="fas fa-landmark"></i> Ministry Portal</h2>
+        <p style="color: #666; font-size: 14px;">GIS Physical Planning Division</p>
         <input id="loginUser" type="text" placeholder="Username">
         <input id="loginPass" type="password" placeholder="Password">
         <button type="button" class="btn btn-primary" onclick="handleLogin()">Access Registry</button>
@@ -72,14 +78,20 @@
     <div class="page">
         <div class="cert-header">
             <h1 style="color: var(--color-primary); margin: 0;">MINISTRY OF LANDS</h1>
-            <h2>Technical Verification Report</h2>
+            <h2 style="margin: 5px 0;">Technical Verification Report</h2>
         </div>
-        <p><b>Plot Number:</b> <span class="p-id"></span> | <b>Date:</b> <span class="p-date"></span></p>
-        <p style="font-size: 18px;"><b>Measured Setback:</b> <b style="color:red;" class="p-setback"></b></p>
+        <p style="position: relative; z-index: 2;"><b>Plot Number:</b> <span class="p-id"></span> | <b>Date:</b> <span class="p-date"></span></p>
+        <p style="font-size: 18px; position: relative; z-index: 2;"><b>Verified Setback:</b> <b style="color:red;" class="p-setback"></b></p>
         
         <div id="tech-map-zone"></div> 
-        <div style="margin-top:50px;">
-            <div style="border-top: 1px solid #000; width: 200px; text-align: center; padding-top: 5px;">Planning/GIS Officer</div>
+
+        <div style="margin-top:60px; position: relative; z-index: 2; display: flex; justify-content: space-between;">
+            <div style="text-align: center;">
+                <div style="border-top: 1px solid #000; width: 200px; padding-top: 5px;">Planning/GIS Officer</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="border-top: 1px solid #000; width: 200px; padding-top: 5px;">Digital Stamp Date</div>
+            </div>
         </div>
     </div>
 </div>
@@ -101,20 +113,24 @@
             </select>
         </div>
         <div class="step">
-            <label><b>2. Technical Scan</b></label>
+            <label><b>2. Technical Scan (GeoJSON)</b></label>
             <input type="file" id="buildingUpload" style="margin-top:10px; width:100%;">
-            <button type="button" class="btn btn-primary" style="margin-top:10px;" onclick="runValidation()">Run Analysis</button>
+            <button type="button" class="btn btn-primary" style="margin-top:10px;" onclick="runValidation()">
+                <i class="fas fa-microscope"></i> Run Analysis
+            </button>
         </div>
         <div id="techResult" class="step" style="display:none; border-left: 4px solid var(--color-primary);">
-            Setback: <b id="resSetback" style="color: var(--color-danger);">-</b><br>
-            <button type="button" class="btn btn-secondary" style="margin-top:10px;" onclick="preparePrint('tech')">🖨️ Print Report</button>
+            Result: <b id="resSetback" style="color: var(--color-danger);">-</b><br>
+            <button type="button" id="printBtn" class="btn btn-secondary" style="margin-top:10px;" onclick="preparePrint('tech')">
+                <i class="fas fa-file-pdf"></i> <span id="printBtnText">Print Report</span>
+            </button>
         </div>
     </div>
 
     <div id="module2" style="display:none;">
         <div class="step">
-            <label><b>Executive Decision: <span id="reviewID">-</span></b></label>
-            <textarea id="directorNote" placeholder="Enter conditions..."></textarea>
+            <label><b>Executive Review: <span id="reviewID">-</span></b></label>
+            <textarea id="directorNote" placeholder="Enter executive conditions..."></textarea>
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:5px; margin-top:10px;">
                 <button type="button" class="btn btn-approve" onclick="preparePrint('exec', 'APPROVED')">APPROVE</button>
                 <button type="button" class="btn btn-reject" onclick="preparePrint('exec', 'REJECTED')">REJECT</button>
@@ -124,25 +140,25 @@
 
     <div id="module3" style="display:none;">
         <div class="step" style="background: var(--color-dark); color: white;">
-            <b>Live Stats</b>
-            <div class="stat-grid">
-                <div><div class="stat-val" id="st-total">0</div><div style="font-size:9px;">TOTAL</div></div>
-                <div><div class="stat-val" style="color: var(--color-success);" id="st-app">0</div><div style="font-size:9px;">APPS</div></div>
-                <div><div class="stat-val" style="color: var(--color-danger);" id="st-rej">0</div><div style="font-size:9px;">REJS</div></div>
+            <b>Activity Monitor</b>
+            <div style="display: flex; justify-content: space-around; text-align: center; margin-top: 10px;">
+                <div><div id="st-total" style="font-size: 20px; font-weight: bold;">0</div><div style="font-size:10px;">TOTAL</div></div>
+                <div><div id="st-app" style="font-size: 20px; font-weight: bold; color: var(--color-success);">0</div><div style="font-size:10px;">APPROVED</div></div>
+                <div><div id="st-rej" style="font-size: 20px; font-weight: bold; color: var(--color-danger);">0</div><div style="font-size:10px;">REJECTED</div></div>
             </div>
         </div>
     </div>
 
     <div class="step" style="margin-top:auto;">
-        <button type="button" class="btn btn-reset" onclick="location.reload()">🔄 Reset System</button>
+        <button type="button" class="btn btn-reset" onclick="location.reload()">🔄 Reset Registry</button>
     </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
     const API_BASE = 'https://ministry-lands-portal.onrender.com'; 
-
     const map = L.map('map').setView([5.595, 7.521], 18);
+    
     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { 
         crossOrigin: 'anonymous' 
     }).addTo(map);
@@ -159,14 +175,13 @@
         try {
             const res = await fetch(`${API_BASE}/api/plots`);
             const data = await res.json();
-            // REMOVE BOTH PLT AND PLOT 001
-            data.features = data.features.filter(f => f.properties.unique_plot_no !== 'PLOT-001' && f.properties.unique_plot_no !== 'PLT-001');
+            data.features = data.features.filter(f => !['PLOT-001', 'PLT-001'].includes(f.properties.unique_plot_no));
             updateSelect(data.features);
             if (plotLayer) map.removeLayer(plotLayer);
             plotLayer = L.geoJSON(data, { 
-                style: { color: '#27ae60', weight: 2, fillOpacity: 0.1 } 
+                style: { color: '#27ae60', weight: 2, fillOpacity: 0.15 } 
             }).addTo(map);
-        } catch (e) { document.getElementById('plotSelect').innerHTML = '<option>Connection Error</option>'; }
+        } catch (e) { document.getElementById('plotSelect').innerHTML = '<option>DB Connection Error</option>'; }
     }
 
     async function runValidation() {
@@ -193,7 +208,7 @@
                     document.getElementById('reviewID').textContent = d.analysis.unique_plot_no;
                     stats.total++;
                 }
-            } catch (err) { alert('Error analyzing data.'); }
+            } catch (err) { alert('Spatial Engine Error.'); }
         };
         reader.readAsText(file);
     }
@@ -202,8 +217,8 @@
         if (complianceLayer) map.removeLayer(complianceLayer);
         complianceLayer = L.layerGroup().addTo(map);
         L.geoJSON(analysis.footprint_geojson, { style: { color: "#e74c3c", weight: 3, fillOpacity: 0.5 } }).addTo(complianceLayer);
-        const plotBound = L.geoJSON(analysis.plot_outline_geojson, { style: { color: "#f1c40f", weight: 5, fillOpacity: 0, dashArray: "5, 10" } }).addTo(complianceLayer);
-        map.fitBounds(plotBound.getBounds(), { padding: [80, 80] });
+        const plotBound = L.geoJSON(analysis.plot_outline_geojson, { style: { color: "#f1c40f", weight: 4, fillOpacity: 0, dashArray: "5, 10" } }).addTo(complianceLayer);
+        map.fitBounds(plotBound.getBounds(), { padding: [50, 50] });
     }
 
     function switchTab(n) {
@@ -216,16 +231,13 @@
     }
 
     function updateSelect(fs) {
-        const sel = document.getElementById('plotSelect');
-        sel.innerHTML = '<option value="">-- Select Plot --</option>' +
+        document.getElementById('plotSelect').innerHTML = '<option value="">-- Select Plot --</option>' +
             fs.map(f => `<option value="${f.properties.unique_plot_no}">${f.properties.unique_plot_no}</option>`).join('');
     }
 
     function focusPlot(p) {
         if (!p || !plotLayer) return;
-        plotLayer.eachLayer(l => {
-            if (l.feature.properties.unique_plot_no === p) map.fitBounds(l.getBounds());
-        });
+        plotLayer.eachLayer(l => { if (l.feature.properties.unique_plot_no === p) map.fitBounds(l.getBounds()); });
     }
 
     function updateDashboard() {
@@ -234,45 +246,47 @@
         document.getElementById('st-rej').textContent = stats.rej;
     }
 
-    // --- ENHANCED PREPARE PRINT ---
+    // --- ENHANCED PRINT LOGIC ---
     function preparePrint(type, decision = '') {
-        if (!currentData) return alert("Run analysis first!");
+        if (!currentData) return alert("No analysis data found.");
 
-        const cert = document.getElementById('techCert');
-        cert.querySelector('.p-id').textContent = currentData.unique_plot_no;
-        cert.querySelector('.p-date').textContent = new Date().toLocaleDateString();
-        cert.querySelector('.p-setback').textContent = currentData.min_setback + 'm';
+        const btnText = document.getElementById('printBtnText');
+        const btn = document.getElementById('printBtn');
+        const oldText = btnText.textContent;
+
+        btnText.textContent = "Generating PDF...";
+        btn.style.opacity = "0.6";
+
+        document.querySelector('.p-id').textContent = currentData.unique_plot_no;
+        document.querySelector('.p-date').textContent = new Date().toLocaleDateString();
+        document.querySelector('.p-setback').textContent = currentData.min_setback + 'm';
 
         const mapZone = document.getElementById('tech-map-zone');
         mapZone.innerHTML = "";
         
-        setTimeout(() => {
-            const rMap = L.map('tech-map-zone', { 
-                zoomControl: false, 
-                attributionControl: false,
-                fadeAnimation: false 
-            }).setView(map.getCenter(), 19);
+        const rMap = L.map('tech-map-zone', { 
+            zoomControl: false, attributionControl: false, fadeAnimation: false 
+        }).setView(map.getCenter(), 19);
 
-            const tiles = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                crossOrigin: 'anonymous'
-            }).addTo(rMap);
+        const tiles = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            crossOrigin: 'anonymous'
+        }).addTo(rMap);
 
-            L.geoJSON(currentData.plot_outline_geojson, { style: { color: "#000", weight: 3, fillOpacity: 0 } }).addTo(rMap);
-            L.geoJSON(currentData.footprint_geojson, { style: { color: "#e74c3c", weight: 2, fillOpacity: 0.4 } }).addTo(rMap);
-            
-            // Critical: Recalculate size to prevent empty tiles
-            rMap.invalidateSize();
+        L.geoJSON(currentData.plot_outline_geojson, { style: { color: "#000", weight: 3, fillOpacity: 0 } }).addTo(rMap);
+        L.geoJSON(currentData.footprint_geojson, { style: { color: "#e74c3c", weight: 2, fillOpacity: 0.4 } }).addTo(rMap);
+        
+        setTimeout(() => { rMap.invalidateSize(); }, 200);
 
-            tiles.on('load', () => {
-                setTimeout(() => { 
-                    window.print(); 
-                    if (type === 'exec') updatePlotStatus(currentData.unique_plot_no, decision === 'APPROVED');
-                }, 1500); // Buffer for rendering
-            });
+        tiles.on('load', () => {
+            setTimeout(() => { 
+                window.print(); 
+                btnText.textContent = oldText;
+                btn.style.opacity = "1";
+                if (type === 'exec') updatePlotStatus(currentData.unique_plot_no, decision === 'APPROVED');
+            }, 1500);
+        });
 
-            // Fallback for slow internet
-            setTimeout(() => { window.print(); }, 4000);
-        }, 500);
+        setTimeout(() => { if(mapZone.innerHTML !== "") { window.print(); btnText.textContent = oldText; btn.style.opacity = "1"; } }, 5000);
     }
 
     async function updatePlotStatus(plotNo, isApproved) {
@@ -282,9 +296,8 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ plot_no: plotNo, gis_cleared: isApproved })
             });
-            if (isApproved) stats.app++; else stats.rej++;
-            updateDashboard();
-        } catch (err) { console.error("Update failed"); }
+            isApproved ? stats.app++ : stats.rej++;
+        } catch (err) { console.error("Sync Error"); }
     }
 </script>
 </body>
